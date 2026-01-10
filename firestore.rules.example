@@ -1,0 +1,41 @@
+// Firestore Security Rules Example
+// Copy these rules to your Firebase Console > Firestore Database > Rules
+
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    // Helper function to check if user is authenticated
+    function isAuthenticated() {
+      return request.auth != null;
+    }
+    
+    // Helper function to get user role
+    function getUserRole() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role;
+    }
+    
+    // Users collection
+    match /users/{userId} {
+      // Users can read their own data
+      allow read: if isAuthenticated() && request.auth.uid == userId;
+      // Only managers can create users
+      allow create: if isAuthenticated() && getUserRole() == 'manager';
+      // Only managers can update users
+      allow update: if isAuthenticated() && getUserRole() == 'manager';
+    }
+    
+    // Clients collection
+    match /clients/{clientId} {
+      // DataEntry can create clients
+      allow create: if isAuthenticated() && getUserRole() == 'dataentry';
+      // Managers can read all clients
+      allow read: if isAuthenticated() && (getUserRole() == 'manager' || 
+        resource.data.assignedTo == request.auth.uid);
+      // Sales can update clients assigned to them
+      allow update: if isAuthenticated() && (
+        getUserRole() == 'manager' || 
+        (getUserRole() == 'sales' && resource.data.assignedTo == request.auth.uid)
+      );
+    }
+  }
+}
