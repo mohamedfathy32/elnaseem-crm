@@ -1,16 +1,20 @@
 import { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { Link } from 'react-router-dom';
-import { httpsCallable } from 'firebase/functions';
-import { functions } from '../../firebase/firebase';
+import { createUserWithEmailAndPassword, signOut, signInWithEmailAndPassword } from 'firebase/auth';
+import { doc, setDoc, getDoc } from 'firebase/firestore';
+import { auth, db } from '../../firebase/firebase';
+import { useAuth } from '../../contexts/AuthContext';
 
 export default function AddEmployee() {
   const navigate = useNavigate();
+  const { currentUser } = useAuth();
   const [formData, setFormData] = useState({
     name: '',
     email: '',
     password: '',
-    role: 'dataentry'
+    role: 'dataentry',
+    managerPassword: '' // كلمة مرور المدير لإعادة تسجيل الدخول
   });
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
@@ -23,43 +27,83 @@ export default function AddEmployee() {
     setLoading(true);
 
     try {
-      // استدعاء Cloud Function لإنشاء الموظف
-      // هذا لن يسجل دخول المدير تلقائياً لأنه يستخدم Admin SDK
-      const createEmployee = httpsCallable(functions, 'createEmployee');
+      if (!currentUser) {
+        throw new Error('يجب تسجيل الدخول أولاً');
+      }
+
+      // التحقق من أن المستخدم الحالي مدير
+      const managerDoc = await doc(db, 'users', currentUser.uid);
+      const managerData = await getDoc(managerDoc);
       
-      const result = await createEmployee({
+      if (!managerData.exists() || managerData.data().role !== 'manager') {
+        throw new Error('ليس لديك صلاحية لإضافة موظفين');
+      }
+
+      // حفظ بيانات المدير قبل إنشاء الموظف
+      const managerEmail = currentUser.email;
+      const managerId = currentUser.uid;
+      const managerPassword = formData.managerPassword;
+
+      if (!managerPassword) {
+        throw new Error('يرجى إدخال كلمة مرور المدير لإعادة تسجيل الدخول');
+      }
+
+      // إنشاء حساب الموظف (سيقوم بتسجيل دخول تلقائي للموظف الجديد)
+      const userCredential = await createUserWithEmailAndPassword(
+        auth,
+        formData.email,
+        formData.password
+      );
+
+      const newEmployeeId = userCredential.user.uid;
+
+      // حفظ بيانات الموظف في Firestore (الموظف الجديد مسجل دخول الآن)
+      // Security Rules تسمح للمستخدم بإنشاء document خاص به
+      await setDoc(doc(db, 'users', newEmployeeId), {
         email: formData.email,
-        password: formData.password,
+        role: formData.role,
         name: formData.name,
-        role: formData.role
+        createdAt: new Date().toISOString(),
+        createdBy: managerId // حفظ ID المدير
       });
 
-      if (result.data.success) {
-        setSuccess('تم إضافة الموظف بنجاح');
-        setFormData({ name: '', email: '', password: '', role: 'dataentry' });
-        
-        setTimeout(() => {
-          navigate('/manager/dashboard');
-        }, 1500);
-      }
+      // تسجيل خروج المستخدم الجديد فوراً
+      await signOut(auth);
+
+      // إعادة تسجيل دخول المدير
+      await signInWithEmailAndPassword(auth, managerEmail, managerPassword);
+
+      setSuccess('تم إضافة الموظف بنجاح');
+      setFormData({ 
+        name: '', 
+        email: '', 
+        password: '', 
+        role: 'dataentry',
+        managerPassword: ''
+      });
+      
+      setTimeout(() => {
+        navigate('/manager/dashboard');
+      }, 1500);
       
     } catch (error) {
       console.error('Error adding employee:', error);
       
-      // معالجة الأخطاء من Cloud Function
-      // Firebase Functions throws HttpsError with code and message
-      if (error.code === 'functions/already-exists' || error.code === 'already-exists') {
+      // معالجة الأخطاء
+      if (error.code === 'auth/email-already-in-use' || error.code === 'auth/email-already-exists') {
         setError('البريد الإلكتروني مستخدم بالفعل');
-      } else if (error.code === 'functions/permission-denied' || error.code === 'permission-denied') {
-        setError('ليس لديك صلاحية لإضافة موظفين');
-      } else if (error.code === 'functions/unauthenticated' || error.code === 'unauthenticated') {
-        setError('يجب تسجيل الدخول أولاً');
-      } else if (error.code === 'functions/invalid-argument' || error.code === 'invalid-argument') {
-        setError(error.message || 'البيانات المدخلة غير صحيحة');
-      } else if (error.code === 'functions/unavailable' || error.code === 'unavailable') {
-        setError('الخدمة غير متاحة حالياً. تأكد من نشر Cloud Functions أولاً.');
+      } else if (error.code === 'auth/weak-password') {
+        setError('كلمة المرور ضعيفة. يجب أن تكون 6 أحرف على الأقل');
+      } else if (error.code === 'auth/invalid-email') {
+        setError('البريد الإلكتروني غير صحيح');
+      } else if (error.code === 'auth/wrong-password' || error.code === 'auth/invalid-credential') {
+        setError('كلمة مرور المدير غير صحيحة');
+      } else if (error.message.includes('صلاحية')) {
+        setError(error.message);
+      } else if (error.message.includes('كلمة مرور المدير')) {
+        setError(error.message);
       } else {
-        setError(error.message || 'فشل إضافة الموظف. تأكد من نشر Cloud Functions. يرجى المحاولة مرة أخرى.');
+        setError(error.message || 'فشل إضافة الموظف. يرجى المحاولة مرة أخرى.');
       }
     } finally {
       setLoading(false);
@@ -139,7 +183,7 @@ export default function AddEmployee() {
               />
             </div>
 
-            <div className="mb-6">
+            <div className="mb-4">
               <label className="block text-gray-700 text-sm font-medium mb-2">
                 الدور *
               </label>
@@ -152,6 +196,23 @@ export default function AddEmployee() {
                 <option value="dataentry">Data Entry</option>
                 <option value="sales">Sales</option>
               </select>
+            </div>
+
+            <div className="mb-6">
+              <label className="block text-gray-700 text-sm font-medium mb-2">
+                كلمة مرور المدير * (لإعادة تسجيل الدخول)
+              </label>
+              <input
+                type="password"
+                value={formData.managerPassword}
+                onChange={(e) => setFormData({ ...formData, managerPassword: e.target.value })}
+                required
+                className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="أدخل كلمة مرور المدير"
+              />
+              <p className="mt-1 text-xs text-gray-500">
+                مطلوبة لإعادة تسجيل دخولك بعد إضافة الموظف
+              </p>
             </div>
 
             <div className="flex gap-4">

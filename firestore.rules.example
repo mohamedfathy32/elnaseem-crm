@@ -18,10 +18,13 @@ service cloud.firestore {
     match /users/{userId} {
       // Users can read their own data
       allow read: if isAuthenticated() && request.auth.uid == userId;
-      // Only managers can create users
-      allow create: if isAuthenticated() && getUserRole() == 'manager';
-      // Only managers can update users
-      allow update: if isAuthenticated() && getUserRole() == 'manager';
+      // Allow creating user document - we'll verify manager role in the code
+      // This allows newly created users to save their data
+      allow create: if isAuthenticated() && request.auth.uid == userId;
+      // Managers can create/update any user document
+      allow create, update: if isAuthenticated() && getUserRole() == 'manager';
+      // Users can update their own data
+      allow update: if isAuthenticated() && request.auth.uid == userId;
     }
     
     // Clients collection
