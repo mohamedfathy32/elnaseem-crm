@@ -1,5 +1,5 @@
 import { useState, useEffect } from 'react';
-import { collection, query, where, getDocs, doc, updateDoc, writeBatch, getDoc } from 'firebase/firestore';
+import { collection, query, where, getDocs, doc, updateDoc, writeBatch, getDoc, setDoc } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
 import { useAuth } from '../../contexts/AuthContext';
 import { useNavigate, Link } from 'react-router-dom';
@@ -22,13 +22,74 @@ export default function ManagerDashboard() {
   const [assigning, setAssigning] = useState(false);
   const [selectedClients, setSelectedClients] = useState(new Set());
   const [selectedEmployee, setSelectedEmployee] = useState('');
+  const [exchangeRates, setExchangeRates] = useState({
+    buyRate: 0, // معامل الشراء
+    sellRate: 0  // معامل البيع
+  });
+  const [editingRates, setEditingRates] = useState({
+    buyRate: false,
+    sellRate: false
+  });
+  const [tempRates, setTempRates] = useState({
+    buyRate: 0,
+    sellRate: 0
+  });
+
+  // Filters
+  const [employeeFilters, setEmployeeFilters] = useState({
+    search: '',
+    role: '',
+    status: '' // 'active' or 'disabled'
+  });
+  const [clientFilters, setClientFilters] = useState({
+    search: '',
+    status: '',
+    employee: '',
+    dateFrom: '',
+    dateTo: ''
+  });
+  const [filteredEmployees, setFilteredEmployees] = useState([]);
+  const [filteredAssignedClients, setFilteredAssignedClients] = useState([]);
+  const [filteredUnassignedClients, setFilteredUnassignedClients] = useState([]);
 
   useEffect(() => {
     fetchData();
   }, []);
 
+  useEffect(() => {
+    applyEmployeeFilters();
+  }, [employees, employeeFilters]);
+
+  useEffect(() => {
+    applyClientFilters();
+  }, [assignedClients, unassignedClients, clientFilters]);
+
   async function fetchData() {
     try {
+      // Get exchange rates
+      try {
+        const ratesDoc = await getDoc(doc(db, 'settings', 'exchangeRates'));
+        if (ratesDoc.exists()) {
+          const ratesData = ratesDoc.data();
+          setExchangeRates({
+            buyRate: ratesData.buyRate || 0,
+            sellRate: ratesData.sellRate || 0
+          });
+          setTempRates({
+            buyRate: ratesData.buyRate || 0,
+            sellRate: ratesData.sellRate || 0
+          });
+        } else {
+          // Initialize default rates if not exist
+          const defaultRates = { buyRate: 0, sellRate: 0 };
+          await setDoc(doc(db, 'settings', 'exchangeRates'), defaultRates);
+          setExchangeRates(defaultRates);
+          setTempRates(defaultRates);
+        }
+      } catch (error) {
+        console.error('Error fetching exchange rates:', error);
+      }
+
       // Get all clients
       const clientsSnapshot = await getDocs(collection(db, 'clients'));
       const allClients = clientsSnapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
@@ -168,10 +229,149 @@ export default function ManagerDashboard() {
   }
 
   function handleSelectAll() {
-    if (selectedClients.size === unassignedClients.length && unassignedClients.length > 0) {
+    if (selectedClients.size === filteredUnassignedClients.length && filteredUnassignedClients.length > 0) {
       setSelectedClients(new Set());
     } else {
-      setSelectedClients(new Set(unassignedClients.map(c => c.id)));
+      setSelectedClients(new Set(filteredUnassignedClients.map(c => c.id)));
+    }
+  }
+
+  function applyEmployeeFilters() {
+    let filtered = [...employees];
+
+    // Search filter
+    if (employeeFilters.search) {
+      const searchLower = employeeFilters.search.toLowerCase();
+      filtered = filtered.filter(emp =>
+        (emp.name || '').toLowerCase().includes(searchLower) ||
+        (emp.email || '').toLowerCase().includes(searchLower)
+      );
+    }
+
+    // Role filter
+    if (employeeFilters.role) {
+      filtered = filtered.filter(emp => emp.role === employeeFilters.role);
+    }
+
+    // Status filter
+    if (employeeFilters.status) {
+      if (employeeFilters.status === 'active') {
+        filtered = filtered.filter(emp => !emp.disabled);
+      } else if (employeeFilters.status === 'disabled') {
+        filtered = filtered.filter(emp => emp.disabled);
+      }
+    }
+
+    setFilteredEmployees(filtered);
+  }
+
+  function applyClientFilters() {
+    // Filter assigned clients
+    let filteredAssigned = [...assignedClients];
+
+    if (clientFilters.search) {
+      const searchLower = clientFilters.search.toLowerCase();
+      filteredAssigned = filteredAssigned.filter(client =>
+        (client.clientName || '').toLowerCase().includes(searchLower) ||
+        (client.whatsappNumber || '').includes(searchLower)
+      );
+    }
+
+    if (clientFilters.status) {
+      filteredAssigned = filteredAssigned.filter(client => client.status === clientFilters.status);
+    }
+
+    if (clientFilters.employee) {
+      filteredAssigned = filteredAssigned.filter(client => client.assignedTo === clientFilters.employee);
+    }
+
+    if (clientFilters.dateFrom) {
+      const fromDate = new Date(clientFilters.dateFrom);
+      filteredAssigned = filteredAssigned.filter(client => {
+        if (!client.travelDate) return false;
+        const travelDate = new Date(client.travelDate);
+        return travelDate >= fromDate;
+      });
+    }
+
+    if (clientFilters.dateTo) {
+      const toDate = new Date(clientFilters.dateTo);
+      toDate.setHours(23, 59, 59, 999);
+      filteredAssigned = filteredAssigned.filter(client => {
+        if (!client.travelDate) return false;
+        const travelDate = new Date(client.travelDate);
+        return travelDate <= toDate;
+      });
+    }
+
+    setFilteredAssignedClients(filteredAssigned);
+
+    // Filter unassigned clients (similar logic but simpler)
+    let filteredUnassigned = [...unassignedClients];
+
+    if (clientFilters.search) {
+      const searchLower = clientFilters.search.toLowerCase();
+      filteredUnassigned = filteredUnassigned.filter(client =>
+        (client.clientName || '').toLowerCase().includes(searchLower) ||
+        (client.whatsappNumber || '').includes(searchLower)
+      );
+    }
+
+    if (clientFilters.status) {
+      filteredUnassigned = filteredUnassigned.filter(client => client.status === clientFilters.status);
+    }
+
+    if (clientFilters.dateFrom) {
+      const fromDate = new Date(clientFilters.dateFrom);
+      filteredUnassigned = filteredUnassigned.filter(client => {
+        if (!client.travelDate) return false;
+        const travelDate = new Date(client.travelDate);
+        return travelDate >= fromDate;
+      });
+    }
+
+    if (clientFilters.dateTo) {
+      const toDate = new Date(clientFilters.dateTo);
+      toDate.setHours(23, 59, 59, 999);
+      filteredUnassigned = filteredUnassigned.filter(client => {
+        if (!client.travelDate) return false;
+        const travelDate = new Date(client.travelDate);
+        return travelDate <= toDate;
+      });
+    }
+
+    setFilteredUnassignedClients(filteredUnassigned);
+  }
+
+  function handleEditRate(rateType) {
+    setEditingRates({ ...editingRates, [rateType]: true });
+    setTempRates({ ...tempRates, [rateType]: exchangeRates[rateType] });
+  }
+
+  function handleCancelEdit(rateType) {
+    setEditingRates({ ...editingRates, [rateType]: false });
+    setTempRates({ ...tempRates, [rateType]: exchangeRates[rateType] });
+  }
+
+  async function handleSaveRate(rateType) {
+    try {
+      const newRate = parseFloat(tempRates[rateType]);
+      if (isNaN(newRate) || newRate < 0) {
+        alert('يرجى إدخال قيمة صحيحة');
+        return;
+      }
+
+      await setDoc(doc(db, 'settings', 'exchangeRates'), {
+        ...exchangeRates,
+        [rateType]: newRate,
+        updatedAt: new Date().toISOString()
+      }, { merge: true });
+
+      setExchangeRates({ ...exchangeRates, [rateType]: newRate });
+      setEditingRates({ ...editingRates, [rateType]: false });
+    } catch (error) {
+      console.error('Error saving exchange rate:', error);
+      alert('فشل حفظ المعامل');
     }
   }
 
@@ -218,6 +418,34 @@ export default function ManagerDashboard() {
       </header>
 
       <main className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+        {/* Exchange Rates Cards */}
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-8">
+          <ExchangeRateCard
+            title="معامل الشراء"
+            subtitle="سعر الريال مقابل الجنيه (للشراء)"
+            rate={exchangeRates.buyRate}
+            isEditing={editingRates.buyRate}
+            tempRate={tempRates.buyRate}
+            onEdit={() => handleEditRate('buyRate')}
+            onCancel={() => handleCancelEdit('buyRate')}
+            onSave={() => handleSaveRate('buyRate')}
+            onRateChange={(value) => setTempRates({ ...tempRates, buyRate: value })}
+            color="green"
+          />
+          <ExchangeRateCard
+            title="معامل البيع"
+            subtitle="سعر الريال مقابل الجنيه (للبيع)"
+            rate={exchangeRates.sellRate}
+            isEditing={editingRates.sellRate}
+            tempRate={tempRates.sellRate}
+            onEdit={() => handleEditRate('sellRate')}
+            onCancel={() => handleCancelEdit('sellRate')}
+            onSave={() => handleSaveRate('sellRate')}
+            onRateChange={(value) => setTempRates({ ...tempRates, sellRate: value })}
+            color="blue"
+          />
+        </div>
+
         {/* Statistics Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
           <StatCard title="إجمالي العملاء" value={statistics.totalClients} color="blue" />
@@ -264,20 +492,26 @@ export default function ManagerDashboard() {
                   <th className="text-start px-6 py-3  text-xs font-medium text-gray-500 uppercase tracking-wider">
                     متوسط الربح
                   </th>
+                  <th className="text-start px-6 py-3  text-xs font-medium text-gray-500 uppercase tracking-wider">
+                    إجراءات
+                  </th>
                 </tr>
               </thead>
               <tbody className="bg-white divide-y divide-gray-200">
-                {employees.length === 0 ? (
+                {filteredEmployees.length === 0 ? (
                   <tr>
-                    <td colSpan="9" className="px-6 py-4 text-center text-gray-500">
-                      لا يوجد موظفين مسجلين
+                    <td colSpan="10" className="px-6 py-4 text-center text-gray-500">
+                      {employees.length === 0 ? 'لا يوجد موظفين مسجلين' : 'لا توجد نتائج تطابق الفلاتر'}
                     </td>
                   </tr>
                 ) : (
-                  employees.map((employee) => (
+                  filteredEmployees.map((employee) => (
                     <tr key={employee.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
                         {employee.name || employee.email}
+                        {employee.disabled && (
+                          <span className="ml-2 px-2 py-1 text-xs bg-red-100 text-red-800 rounded">معطل</span>
+                        )}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {employee.assignedClients}
@@ -303,6 +537,14 @@ export default function ManagerDashboard() {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {employee.avgProfit.toFixed(2)} ج.م
                       </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm">
+                        <Link
+                          to={`/manager/employee/${employee.id}`}
+                          className="text-blue-600 hover:text-blue-800 hover:underline"
+                        >
+                          التفاصيل
+                        </Link>
+                      </td>
                     </tr>
                   ))
                 )}
@@ -315,9 +557,9 @@ export default function ManagerDashboard() {
         <div className="bg-white rounded-lg shadow overflow-hidden mt-8">
           <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
             <h2 className="text-xl font-semibold text-gray-800">
-              العملاء غير المسندين ({unassignedClients.length})
+              العملاء غير المسندين ({filteredUnassignedClients.length})
             </h2>
-            {unassignedClients.length > 0 && (
+            {filteredUnassignedClients.length > 0 && (
               <div className="flex gap-4 items-center">
                 <select
                   value={selectedEmployee}
@@ -344,7 +586,7 @@ export default function ManagerDashboard() {
                   onClick={handleSelectAll}
                   className="text-sm text-blue-600 hover:text-blue-700"
                 >
-                  {selectedClients.size === unassignedClients.length && unassignedClients.length > 0 
+                  {selectedClients.size === filteredUnassignedClients.length && filteredUnassignedClients.length > 0 
                     ? 'إلغاء تحديد الكل' 
                     : 'تحديد الكل'}
                 </button>
@@ -363,7 +605,7 @@ export default function ManagerDashboard() {
                     <th className="px-6 py-3">
                       <input
                         type="checkbox"
-                        checked={selectedClients.size === unassignedClients.length && unassignedClients.length > 0}
+                        checked={selectedClients.size === filteredUnassignedClients.length && filteredUnassignedClients.length > 0}
                         onChange={handleSelectAll}
                         className="rounded border-gray-300"
                       />
@@ -392,7 +634,7 @@ export default function ManagerDashboard() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {unassignedClients.map((client) => (
+                  {filteredUnassignedClients.map((client) => (
                     <tr key={client.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         <input
@@ -476,12 +718,76 @@ export default function ManagerDashboard() {
         <div className="bg-white rounded-lg shadow overflow-hidden mt-8">
           <div className="px-6 py-4 border-b border-gray-200">
             <h2 className="text-xl font-semibold text-gray-800">
-              العملاء المسندين ({assignedClients.length})
+              العملاء المسندين ({filteredAssignedClients.length})
             </h2>
           </div>
-          {assignedClients.length === 0 ? (
+          {/* Client Filters for Assigned */}
+          <div className="px-6 py-4 border-b border-gray-200 bg-gray-50">
+            <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">البحث</label>
+                <input
+                  type="text"
+                  value={clientFilters.search}
+                  onChange={(e) => setClientFilters({ ...clientFilters, search: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                  placeholder="اسم أو رقم العميل"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">الحالة</label>
+                <select
+                  value={clientFilters.status}
+                  onChange={(e) => setClientFilters({ ...clientFilters, status: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">جميع الحالات</option>
+                  <option value="new">جديد</option>
+                  <option value="waitingOffer">في انتظار العرض</option>
+                  <option value="followUp">متابعة</option>
+                  <option value="sold">تم البيع</option>
+                  <option value="postponed">مؤجل</option>
+                  <option value="rejected">رفض</option>
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">الموظف</label>
+                <select
+                  value={clientFilters.employee}
+                  onChange={(e) => setClientFilters({ ...clientFilters, employee: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                >
+                  <option value="">جميع الموظفين</option>
+                  {employees.map(emp => (
+                    <option key={emp.id} value={emp.id}>
+                      {emp.name || emp.email}
+                    </option>
+                  ))}
+                </select>
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">تاريخ من</label>
+                <input
+                  type="date"
+                  value={clientFilters.dateFrom}
+                  onChange={(e) => setClientFilters({ ...clientFilters, dateFrom: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">تاريخ إلى</label>
+                <input
+                  type="date"
+                  value={clientFilters.dateTo}
+                  onChange={(e) => setClientFilters({ ...clientFilters, dateTo: e.target.value })}
+                  className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                />
+              </div>
+            </div>
+          </div>
+          {filteredAssignedClients.length === 0 ? (
             <div className="p-8 text-center text-gray-500">
-              لا يوجد عملاء مسندين
+              {assignedClients.length === 0 ? 'لا يوجد عملاء مسندين' : 'لا توجد نتائج تطابق الفلاتر'}
             </div>
           ) : (
             <div className="overflow-x-auto">
@@ -515,7 +821,7 @@ export default function ManagerDashboard() {
                   </tr>
                 </thead>
                 <tbody className="bg-white divide-y divide-gray-200">
-                  {assignedClients.map((client) => (
+                  {filteredAssignedClients.map((client) => (
                     <tr key={client.id} className="hover:bg-gray-50">
                       <td className="px-6 py-4 whitespace-nowrap">
                         {client.passportUrl ? (
@@ -593,6 +899,66 @@ function StatCard({ title, value, color }) {
     <div className={`rounded-lg border p-4 ${colorClasses[color]}`}>
       <div className="text-sm font-medium mb-1">{title}</div>
       <div className="text-2xl font-bold">{value}</div>
+    </div>
+  );
+}
+
+function ExchangeRateCard({ title, subtitle, rate, isEditing, tempRate, onEdit, onCancel, onSave, onRateChange, color }) {
+  const colorClasses = {
+    green: 'bg-green-50 border-green-300',
+    blue: 'bg-blue-50 border-blue-300'
+  };
+
+  return (
+    <div className={`rounded-lg border-2 p-6 ${colorClasses[color]} shadow-sm`}>
+      <div className="flex justify-between items-start mb-4">
+        <div>
+          <h3 className="text-lg font-semibold text-gray-800">{title}</h3>
+          <p className="text-sm text-gray-600 mt-1">{subtitle}</p>
+        </div>
+        {!isEditing && (
+          <button
+            onClick={onEdit}
+            className="text-blue-600 hover:text-blue-700 text-sm font-medium"
+          >
+            تعديل
+          </button>
+        )}
+      </div>
+
+      {isEditing ? (
+        <div className="space-y-3">
+          <div>
+            <input
+              type="number"
+              step="0.01"
+              min="0"
+              value={tempRate}
+              onChange={(e) => onRateChange(e.target.value)}
+              className="w-full px-4 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 text-2xl font-bold"
+              autoFocus
+            />
+          </div>
+          <div className="flex gap-2">
+            <button
+              onClick={onSave}
+              className="flex-1 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 focus:outline-none focus:ring-2 focus:ring-green-500"
+            >
+              حفظ
+            </button>
+            <button
+              onClick={onCancel}
+              className="flex-1 bg-gray-200 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-300 focus:outline-none focus:ring-2 focus:ring-gray-500"
+            >
+              إلغاء
+            </button>
+          </div>
+        </div>
+      ) : (
+        <div className="text-3xl font-bold text-gray-800">
+          {rate.toFixed(2)} ج.م
+        </div>
+      )}
     </div>
   );
 }

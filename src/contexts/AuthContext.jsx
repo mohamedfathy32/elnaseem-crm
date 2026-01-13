@@ -6,7 +6,7 @@ import {
   onAuthStateChanged,
   createUserWithEmailAndPassword
 } from 'firebase/auth';
-import { doc, getDoc, setDoc } from 'firebase/firestore';
+import { doc, getDoc, setDoc, updateDoc, increment } from 'firebase/firestore';
 import { db } from '../firebase/firebase';
 
 const AuthContext = createContext();
@@ -27,7 +27,29 @@ export function AuthProvider({ children }) {
     // Get user role from Firestore
     const userDoc = await getDoc(doc(db, 'users', user.uid));
     if (userDoc.exists()) {
-      setUserRole(userDoc.data().role);
+      const userData = userDoc.data();
+      setUserRole(userData.role);
+      
+      // Check if user is disabled
+      if (userData.disabled) {
+        await signOut(auth);
+        throw new Error('تم تعطيل حسابك. يرجى التواصل مع المدير.');
+      }
+      
+      // Update login tracking
+      const now = new Date();
+      const currentMonthStart = new Date(now.getFullYear(), now.getMonth(), 1);
+      const lastLogin = userData.lastLogin ? new Date(userData.lastLogin) : null;
+      
+      // Reset login count if it's a new month
+      const loginCount = (lastLogin && lastLogin >= currentMonthStart) 
+        ? (userData.loginCount || 0) 
+        : 0;
+      
+      await updateDoc(doc(db, 'users', user.uid), {
+        lastLogin: now.toISOString(),
+        loginCount: loginCount + 1
+      });
     }
     
     return userCredential;

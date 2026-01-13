@@ -40,5 +40,11 @@ service cloud.firestore {
         (getUserRole() == 'sales' && resource.data.assignedTo == request.auth.uid)
       );
     }
+    
+    // Settings collection (only managers can access)
+    match /settings/{settingId} {
+      // Only managers can read and write settings
+      allow read, write: if isAuthenticated() && getUserRole() == 'manager';
+    }
   }
 }
