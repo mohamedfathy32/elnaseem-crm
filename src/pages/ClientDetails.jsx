@@ -1,8 +1,9 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, useRef } from 'react';
 import { useParams, useNavigate, Link } from 'react-router-dom';
 import { doc, getDoc, updateDoc, arrayUnion, getDoc as getDocFn } from 'firebase/firestore';
 import { db } from '../firebase/firebase';
 import { useAuth } from '../contexts/AuthContext';
+import { CLOUDINARY_CONFIG } from '../utils/cloudinary';
 
 export default function ClientDetails() {
   const { id } = useParams();
@@ -104,6 +105,13 @@ export default function ClientDetails() {
         updateData.sellPrice = profitData.sellPrice;
         updateData.costCurrency = profitData.costCurrency;
         updateData.sellCurrency = profitData.sellCurrency;
+        // Add ticket image and BNR if provided
+        if (profitData.ticketImageUrl) {
+          updateData.ticketImageUrl = profitData.ticketImageUrl;
+        }
+        if (profitData.bnrNumber) {
+          updateData.bnrNumber = profitData.bnrNumber;
+        }
       }
 
       await updateDoc(doc(db, 'clients', client.id), updateData);
@@ -350,6 +358,39 @@ export default function ClientDetails() {
                       </p>
                     </div>
                   )}
+
+                  {client.bnrNumber && (
+                    <div>
+                      <label className="block text-sm font-medium text-gray-700 mb-1">رقم BNR</label>
+                      <p className="text-gray-900 font-semibold">{client.bnrNumber}</p>
+                    </div>
+                  )}
+                </div>
+              </div>
+            )}
+
+            {/* Ticket Image */}
+            {client.status === 'sold' && client.ticketImageUrl && (
+              <div className="bg-white rounded-lg shadow overflow-hidden">
+                <div className="px-6 py-4 border-b border-gray-200">
+                  <label className="block text-sm font-medium text-gray-700">صورة التذكرة</label>
+                </div>
+                <div className="px-6 py-4">
+                  <div className="flex justify-center">
+                    <img 
+                      src={client.ticketImageUrl} 
+                      alt="صورة التذكرة" 
+                      className="max-w-full max-h-96 object-contain border border-gray-300 rounded-lg shadow"
+                    />
+                  </div>
+                  <a 
+                    href={client.ticketImageUrl} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="mt-4 inline-block text-blue-600 hover:text-blue-700 text-sm"
+                  >
+                    فتح الصورة في نافذة جديدة
+                  </a>
                 </div>
               </div>
             )}
@@ -545,14 +586,35 @@ function StatusUpdateForm({
     };
   }
 
-  async function handleSaveProfit() {
-    const calculated = calculateProfit();
+  async function handleSaveProfit(profitDataWithExtras) {
+    // Use the data from the modal which includes ticketImageUrl and bnrNumber
+    const costPrice = parseFloat(profitDataWithExtras.costPrice) || 0;
+    const sellPrice = parseFloat(profitDataWithExtras.sellPrice) || 0;
+    
+    let costPriceEGP;
+    if (profitDataWithExtras.costCurrency === 'SAR') {
+      costPriceEGP = costPrice * exchangeRates.buyRate;
+    } else {
+      costPriceEGP = costPrice;
+    }
+    
+    let sellPriceEGP;
+    if (profitDataWithExtras.sellCurrency === 'SAR') {
+      sellPriceEGP = sellPrice * exchangeRates.sellRate;
+    } else {
+      sellPriceEGP = sellPrice;
+    }
+    
+    const profit = sellPriceEGP - costPriceEGP;
+
     await onUpdate('sold', '', {
-      costPrice: profitData.costPrice,
-      sellPrice: profitData.sellPrice,
-      costCurrency: profitData.costCurrency,
-      sellCurrency: profitData.sellCurrency,
-      profit: calculated.profit
+      costPrice: profitDataWithExtras.costPrice,
+      sellPrice: profitDataWithExtras.sellPrice,
+      costCurrency: profitDataWithExtras.costCurrency,
+      sellCurrency: profitDataWithExtras.sellCurrency,
+      profit: profit,
+      ticketImageUrl: profitDataWithExtras.ticketImageUrl || '',
+      bnrNumber: profitDataWithExtras.bnrNumber || ''
     });
     setShowProfitModal(false);
     setProfitData({ costPrice: '', sellPrice: '', costCurrency: 'SAR', sellCurrency: 'SAR' });
@@ -661,9 +723,61 @@ function NoteModal({ status, note, setNote, onSave, onClose }) {
 }
 
 function ProfitModal({ profitData, setProfitData, exchangeRates, calculated, onSave, onClose }) {
+  const [ticketImageUrl, setTicketImageUrl] = useState(profitData.ticketImageUrl || '');
+  const [bnrNumber, setBnrNumber] = useState(profitData.bnrNumber || '');
+  const [uploadProgress, setUploadProgress] = useState('');
+  const cloudinaryWidgetRef = useRef(null);
+
+  function handleUploadTicketClick() {
+    // Load Cloudinary Widget script if not already loaded
+    if (!window.cloudinary) {
+      const script = document.createElement('script');
+      script.src = 'https://upload-widget.cloudinary.com/global/all.js';
+      script.async = true;
+      document.body.appendChild(script);
+      
+      script.onload = () => {
+        openCloudinaryWidget();
+      };
+    } else {
+      openCloudinaryWidget();
+    }
+  }
+
+  function openCloudinaryWidget() {
+    cloudinaryWidgetRef.current = window.cloudinary.createUploadWidget(
+      {
+        cloudName: CLOUDINARY_CONFIG.cloudName,
+        uploadPreset: CLOUDINARY_CONFIG.uploadPreset,
+        sources: ['local', 'camera'],
+        multiple: false,
+        maxFileSize: 10000000, // 10MB
+        clientAllowedFormats: ['image', 'pdf']
+      },
+      (error, result) => {
+        if (!error && result && result.event === 'success') {
+          setTicketImageUrl(result.info.secure_url);
+          setUploadProgress('تم رفع الصورة بنجاح');
+        } else if (error) {
+          setUploadProgress('فشل رفع الصورة. يرجى المحاولة مرة أخرى.');
+        }
+      }
+    );
+
+    cloudinaryWidgetRef.current.open();
+  }
+
+  function handleSave() {
+    onSave({
+      ...profitData,
+      ticketImageUrl: ticketImageUrl,
+      bnrNumber: bnrNumber
+    });
+  }
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white rounded-lg p-6 max-w-lg w-full mx-4">
+      <div className="bg-white rounded-lg p-6 max-w-lg w-full mx-4 max-h-[90vh] overflow-y-auto">
         <h3 className="text-lg font-semibold text-gray-800 mb-4">
           حساب الربح - تم البيع
         </h3>
@@ -776,9 +890,59 @@ function ProfitModal({ profitData, setProfitData, exchangeRates, calculated, onS
             </div>
           )}
 
+          {/* Ticket Image Upload */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              صورة التذكرة
+            </label>
+            {ticketImageUrl ? (
+              <div className="space-y-2">
+                <div className="flex justify-center">
+                  <img 
+                    src={ticketImageUrl} 
+                    alt="صورة التذكرة" 
+                    className="max-w-full max-h-48 object-contain border border-gray-300 rounded-lg"
+                  />
+                </div>
+                <button
+                  onClick={handleUploadTicketClick}
+                  className="w-full bg-gray-200 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-300 text-sm"
+                >
+                  تغيير الصورة
+                </button>
+              </div>
+            ) : (
+              <button
+                onClick={handleUploadTicketClick}
+                className="w-full bg-blue-100 text-blue-700 px-4 py-2 rounded-lg hover:bg-blue-200 border-2 border-dashed border-blue-300"
+              >
+                رفع صورة التذكرة
+              </button>
+            )}
+            {uploadProgress && (
+              <p className={`text-xs mt-1 ${uploadProgress.includes('نجاح') ? 'text-green-600' : 'text-red-600'}`}>
+                {uploadProgress}
+              </p>
+            )}
+          </div>
+
+          {/* BNR Number */}
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              رقم BNR
+            </label>
+            <input
+              type="text"
+              value={bnrNumber}
+              onChange={(e) => setBnrNumber(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              placeholder="أدخل رقم BNR"
+            />
+          </div>
+
           <div className="flex gap-3 pt-4">
             <button
-              onClick={onSave}
+              onClick={handleSave}
               disabled={!profitData.costPrice || !profitData.sellPrice}
               className="flex-1 bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50 disabled:cursor-not-allowed"
             >
