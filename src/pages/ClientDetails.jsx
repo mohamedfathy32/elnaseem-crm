@@ -1,23 +1,27 @@
 import { useState, useEffect, useRef } from 'react';
-import { useParams, useNavigate, Link } from 'react-router-dom';
-import { doc, getDoc, updateDoc, arrayUnion, getDoc as getDocFn } from 'firebase/firestore';
+import { useParams, Link } from 'react-router-dom';
+import { doc, getDoc, updateDoc, arrayUnion, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../firebase/firebase';
 import { useAuth } from '../contexts/AuthContext';
 import { CLOUDINARY_CONFIG } from '../utils/cloudinary';
 
 export default function ClientDetails() {
   const { id } = useParams();
-  const navigate = useNavigate();
+  // const navigate = useNavigate();
   const { userRole, currentUser } = useAuth();
   const [client, setClient] = useState(null);
   const [employee, setEmployee] = useState(null);
-  const [allEmployees, setAllEmployees] = useState([]);
+  // const [allEmployees, setAllEmployees] = useState([]);
   const [exchangeRates, setExchangeRates] = useState({ buyRate: 0, sellRate: 0 });
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [unauthorized, setUnauthorized] = useState(false);
+  const [previousBookings, setPreviousBookings] = useState([]);
+  const [showAddNoteModal, setShowAddNoteModal] = useState(false);
+  const [userNames, setUserNames] = useState({});
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/immutability
     fetchClientDetails();
   }, [id]);
 
@@ -69,6 +73,54 @@ export default function ClientDetails() {
         }
       }
 
+      // Get previous bookings with same phone number
+      if (clientData.whatsappNumber) {
+        // Normalize phone number (remove all non-numeric characters for comparison)
+        const normalizePhone = (phone) => phone ? phone.replace(/[^0-9]/g, '') : '';
+        const currentPhoneNormalized = normalizePhone(clientData.whatsappNumber);
+        
+        // Get all clients and filter by normalized phone number
+        const allClientsSnapshot = await getDocs(collection(db, 'clients'));
+        const bookings = allClientsSnapshot.docs
+          .map(doc => ({ id: doc.id, ...doc.data() }))
+          .filter(booking => {
+            if (booking.id === clientData.id) return false; // Exclude current client
+            const bookingPhoneNormalized = normalizePhone(booking.whatsappNumber);
+            return bookingPhoneNormalized === currentPhoneNormalized && bookingPhoneNormalized.length > 0;
+          })
+          .sort((a, b) => {
+            const dateA = a.createdAt ? new Date(a.createdAt) : new Date(0);
+            const dateB = b.createdAt ? new Date(b.createdAt) : new Date(0);
+            return dateB - dateA; // Newest first
+          });
+        setPreviousBookings(bookings);
+      }
+
+      // Fetch user names for notes
+      if (clientData.notes && Array.isArray(clientData.notes)) {
+        const uniqueUserIds = [...new Set(clientData.notes.map(note => note.author).filter(Boolean))];
+        const namesMap = {};
+        
+        await Promise.all(
+          uniqueUserIds.map(async (userId) => {
+            try {
+              const userDoc = await getDoc(doc(db, 'users', userId));
+              if (userDoc.exists()) {
+                const userData = userDoc.data();
+                namesMap[userId] = userData.name || userData.email || 'غير معروف';
+              } else {
+                namesMap[userId] = 'غير معروف';
+              }
+            } catch (error) {
+              console.error(`Error fetching user ${userId}:`, error);
+              namesMap[userId] = 'غير معروف';
+            }
+          })
+        );
+        
+        setUserNames(namesMap);
+      }
+
       setLoading(false);
     } catch (error) {
       console.error('Error fetching client details:', error);
@@ -77,7 +129,32 @@ export default function ClientDetails() {
     }
   }
 
-  async function updateStatus(newStatus, note = '', profitData = null) {
+  async function addNote(note) {
+    if (!client || !currentUser || !note.trim()) return;
+
+    try {
+      const noteEntry = {
+        note: note.trim(),
+        author: currentUser.uid,
+        authorName: currentUser.email,
+        timestamp: new Date().toISOString()
+        // No statusChange - this is just a note
+      };
+
+      await updateDoc(doc(db, 'clients', client.id), {
+        notes: arrayUnion(noteEntry),
+        updatedAt: new Date().toISOString()
+      });
+      
+      await fetchClientDetails(); // Refresh data
+      alert('تم إضافة الملاحظة بنجاح');
+    } catch (error) {
+      console.error('Error adding note:', error);
+      alert('فشل إضافة الملاحظة');
+    }
+  }
+
+  async function updateStatus(newStatus, note = '', profitData = null, postponedDate = null) {
     if (!client || !currentUser) return;
 
     try {
@@ -85,6 +162,11 @@ export default function ClientDetails() {
         status: newStatus,
         updatedAt: new Date().toISOString()
       };
+
+      // Add postponed date if status is postponed
+      if (newStatus === 'postponed' && postponedDate) {
+        updateData.postponedDate = postponedDate;
+      }
 
       // Add note if provided
       if (note.trim()) {
@@ -95,6 +177,9 @@ export default function ClientDetails() {
           timestamp: new Date().toISOString(),
           statusChange: newStatus
         };
+        if (newStatus === 'postponed' && postponedDate) {
+          noteEntry.postponedDate = postponedDate;
+        }
         updateData.notes = arrayUnion(noteEntry);
       }
 
@@ -279,6 +364,15 @@ export default function ClientDetails() {
                     <p className="text-gray-900">{new Date(client.followUpDate).toLocaleDateString('ar-EG')}</p>
                   </div>
                 )}
+
+                {client.status === 'postponed' && client.postponedDate && (
+                  <div>
+                    <label className="block text-sm font-medium text-gray-700 mb-1">تاريخ التأجيل</label>
+                    <p className="text-gray-900 font-semibold text-yellow-700">
+                      {new Date(client.postponedDate).toLocaleDateString('ar-EG')}
+                    </p>
+                  </div>
+                )}
                 
                 {employee && (
                   <div>
@@ -422,48 +516,87 @@ export default function ClientDetails() {
             )}
 
             {/* Notes History */}
-            {sortedNotes.length > 0 && (
-              <div className="bg-white rounded-lg shadow overflow-hidden">
-                <div className="px-6 py-4 border-b border-gray-200">
-                  <h2 className="text-xl font-semibold text-gray-800">سجل الملاحظات</h2>
-                </div>
-                
-                <div className="divide-y divide-gray-200">
-                  {sortedNotes.map((note, index) => (
-                    <div key={index} className="px-6 py-4">
-                      <div className="flex justify-between items-start mb-2">
-                        <div className="flex-1">
-                          <p className="text-gray-900 whitespace-pre-wrap">{note.note}</p>
-                        </div>
-                      </div>
-                      <div className="flex justify-between items-center text-xs text-gray-500 mt-2">
-                        <div className="flex items-center gap-2">
-                          {note.statusChange && (
-                            <span className={`px-2 py-1 rounded-full text-xs ${
-                              note.statusChange === 'sold' ? 'bg-green-100 text-green-800' :
-                              note.statusChange === 'rejected' ? 'bg-red-100 text-red-800' :
-                              note.statusChange === 'postponed' ? 'bg-yellow-100 text-yellow-800' :
-                              note.statusChange === 'waitingOffer' ? 'bg-blue-100 text-blue-800' :
-                              'bg-gray-100 text-gray-800'
-                            }`}>
-                              {note.statusChange === 'sold' ? 'تم البيع' :
-                               note.statusChange === 'rejected' ? 'رفض' :
-                               note.statusChange === 'postponed' ? 'مؤجل' :
-                               note.statusChange === 'waitingOffer' ? 'في انتظار العرض' :
-                               note.statusChange === 'followUp' ? 'متابعة' : 'جديد'}
-                            </span>
-                          )}
-                        </div>
-                        <div className="text-left">
-                          <p className="font-medium">{note.authorName || 'غير معروف'}</p>
-                          <p>{note.timestamp ? new Date(note.timestamp).toLocaleString('ar-EG') : '-'}</p>
-                        </div>
-                      </div>
-                    </div>
-                  ))}
-                </div>
+            <div className="bg-white rounded-lg shadow overflow-hidden">
+              <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
+                <h2 className="text-xl font-semibold text-gray-800">سجل الملاحظات</h2>
+                {(userRole === 'sales' || userRole === 'manager') && (
+                  <button
+                    onClick={() => setShowAddNoteModal(true)}
+                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm"
+                  >
+                    إضافة ملاحظة
+                  </button>
+                )}
               </div>
-            )}
+              {sortedNotes.length > 0 ? (
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider border-b border-l border-gray-200">
+                          اسم الموظف
+                        </th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider border-b border-l border-gray-200">
+                          الملاحظة
+                        </th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider border-b border-l border-gray-200">
+                          الحالة
+                        </th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider border-b border-gray-200">
+                          التاريخ والوقت
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200 ">
+                      {sortedNotes.map((note, index) => (
+                        <tr key={index} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900 border-b border-l border-gray-200">
+                            {userNames[note.author] || note.authorName || 'غير معروف'}
+                          </td>
+                          <td className="px-6 py-4 text-sm text-gray-900 border-b border-l border-gray-200">
+                            <div className="whitespace-pre-wrap max-w-md">
+                              {note.note}
+                            </div>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm border-b border-l border-gray-200">
+                            {note.statusChange ? (
+                              <span className={`px-2 py-1 rounded-full text-xs ${
+                                note.statusChange === 'sold' ? 'bg-green-100 text-green-800' :
+                                note.statusChange === 'rejected' ? 'bg-red-100 text-red-800' :
+                                note.statusChange === 'postponed' ? 'bg-yellow-100 text-yellow-800' :
+                                note.statusChange === 'waitingOffer' ? 'bg-blue-100 text-blue-800' :
+                                'bg-gray-100 text-gray-800'
+                              }`}>
+                                {note.statusChange === 'sold' ? 'تم البيع' :
+                                 note.statusChange === 'rejected' ? 'رفض' :
+                                 note.statusChange === 'postponed' ? 'مؤجل' :
+                                 note.statusChange === 'waitingOffer' ? 'في انتظار العرض' :
+                                 note.statusChange === 'followUp' ? 'متابعة' : 'جديد'}
+                              </span>
+                            ) : (
+                              <span className="text-gray-400 text-xs">-</span>
+                            )}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 border-b border-gray-200">
+                            {note.timestamp ? new Date(note.timestamp).toLocaleString('ar-EG', {
+                              year: 'numeric',
+                              month: '2-digit',
+                              day: '2-digit',
+                              hour: '2-digit',
+                              minute: '2-digit'
+                            }) : '-'}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              ) : (
+                <div className="px-6 py-8 text-center text-gray-500">
+                  لا توجد ملاحظات حتى الآن
+                </div>
+              )}
+            </div>
 
             {/* Original Notes (if exists as string) */}
             {client.notes && typeof client.notes === 'string' && (
@@ -473,6 +606,96 @@ export default function ClientDetails() {
                 </div>
                 <div className="px-6 py-4">
                   <p className="text-gray-900 whitespace-pre-wrap">{client.notes}</p>
+                </div>
+              </div>
+            )}
+
+            {/* Previous Bookings */}
+            {previousBookings.length > 0 && (
+              <div className="bg-white rounded-lg shadow overflow-hidden">
+                <div className="px-6 py-4 border-b border-gray-200">
+                  <h2 className="text-xl font-semibold text-gray-800">
+                    الحجوزات السابقة ({previousBookings.length})
+                  </h2>
+                </div>
+                <div className="overflow-x-auto">
+                  <table className="min-w-full divide-y divide-gray-200">
+                    <thead className="bg-gray-50">
+                      <tr>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                          اسم العميل
+                        </th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                          تاريخ السفر
+                        </th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                          مطار الانطلاق
+                        </th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                          مطار الوصول
+                        </th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                          الحالة
+                        </th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                          الربح
+                        </th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                          تاريخ الإضافة
+                        </th>
+                        <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase">
+                          إجراءات
+                        </th>
+                      </tr>
+                    </thead>
+                    <tbody className="bg-white divide-y divide-gray-200">
+                      {previousBookings.map((booking) => (
+                        <tr key={booking.id} className="hover:bg-gray-50">
+                          <td className="px-6 py-4 whitespace-nowrap text-sm font-medium text-gray-900">
+                            {booking.clientName}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {booking.travelDate ? new Date(booking.travelDate).toLocaleDateString('ar-EG') : '-'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {booking.departureAirport || '-'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {booking.arrivalAirport || '-'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm">
+                            <span className={`px-2 py-1 rounded-full text-xs ${
+                              booking.status === 'sold' ? 'bg-green-100 text-green-800' :
+                              booking.status === 'rejected' ? 'bg-red-100 text-red-800' :
+                              booking.status === 'postponed' ? 'bg-yellow-100 text-yellow-800' :
+                              booking.status === 'waitingOffer' ? 'bg-blue-100 text-blue-800' :
+                              'bg-gray-100 text-gray-800'
+                            }`}>
+                              {booking.status === 'sold' ? 'تم البيع' :
+                               booking.status === 'rejected' ? 'رفض' :
+                               booking.status === 'postponed' ? 'مؤجل' :
+                               booking.status === 'waitingOffer' ? 'في انتظار العرض' :
+                               booking.status === 'followUp' ? 'متابعة' : 'جديد'}
+                            </span>
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500 font-semibold">
+                            {booking.profit ? `${parseFloat(booking.profit).toFixed(2)} ج.م` : '-'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                            {booking.createdAt ? new Date(booking.createdAt).toLocaleDateString('ar-EG') : '-'}
+                          </td>
+                          <td className="px-6 py-4 whitespace-nowrap text-sm">
+                            <Link
+                              to={`/client/${booking.id}`}
+                              className="text-blue-600 hover:text-blue-800 hover:underline"
+                            >
+                              عرض التفاصيل
+                            </Link>
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
             )}
@@ -519,13 +742,20 @@ export default function ClientDetails() {
           </div>
         </div>
       </main>
+
+      {/* Add Note Modal */}
+      {showAddNoteModal && (
+        <AddNoteModal
+          onSave={addNote}
+          onClose={() => setShowAddNoteModal(false)}
+        />
+      )}
     </div>
   );
 }
 
 function StatusUpdateForm({ 
-  currentStatus, 
-  currentProfit, 
+  currentStatus,  
   currentCostPrice,
   currentSellPrice,
   currentCostCurrency,
@@ -620,8 +850,8 @@ function StatusUpdateForm({
     setProfitData({ costPrice: '', sellPrice: '', costCurrency: 'SAR', sellCurrency: 'SAR' });
   }
 
-  async function handleSaveNote() {
-    await onUpdate(status, note);
+  async function handleSaveNote(postponedDate = null) {
+    await onUpdate(status, note, null, postponedDate);
     setShowNoteModal(false);
     setNote('');
   }
@@ -683,6 +913,31 @@ function StatusUpdateForm({
 }
 
 function NoteModal({ status, note, setNote, onSave, onClose }) {
+  const [postponedDate, setPostponedDate] = useState('');
+  const [dateError, setDateError] = useState('');
+
+  function handleSave() {
+    if (status === 'postponed') {
+      if (!postponedDate) {
+        setDateError('يرجى إدخال تاريخ التأجيل');
+        return;
+      }
+      const selectedDate = new Date(postponedDate);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      selectedDate.setHours(0, 0, 0, 0);
+      
+      if (selectedDate <= today) {
+        setDateError('تاريخ التأجيل يجب أن يكون أكبر من التاريخ الحالي');
+        return;
+      }
+      setDateError('');
+      onSave(postponedDate);
+    } else {
+      onSave();
+    }
+  }
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
@@ -703,9 +958,32 @@ function NoteModal({ status, note, setNote, onSave, onClose }) {
           />
         </div>
 
+        {status === 'postponed' && (
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              تاريخ التأجيل *
+            </label>
+            <input
+              type="date"
+              value={postponedDate}
+              onChange={(e) => {
+                setPostponedDate(e.target.value);
+                setDateError('');
+              }}
+              min={new Date().toISOString().split('T')[0]}
+              className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                dateError ? 'border-red-300' : 'border-gray-300'
+              }`}
+            />
+            {dateError && (
+              <p className="mt-1 text-sm text-red-600">{dateError}</p>
+            )}
+          </div>
+        )}
+
         <div className="flex gap-3">
           <button
-            onClick={onSave}
+            onClick={handleSave}
             className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
           >
             حفظ
@@ -961,12 +1239,13 @@ function ProfitModal({ profitData, setProfitData, exchangeRates, calculated, onS
   );
 }
 
-function AssignEmployeeForm({ currentEmployee, clientId, onAssign }) {
+function AssignEmployeeForm({ currentEmployee, onAssign }) {
   const [employees, setEmployees] = useState([]);
   const [loading, setLoading] = useState(true);
   const [selectedEmployee, setSelectedEmployee] = useState(currentEmployee?.id || '');
 
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/immutability
     fetchEmployees();
   }, []);
 
@@ -1021,6 +1300,61 @@ function AssignEmployeeForm({ currentEmployee, clientId, onAssign }) {
       >
         حفظ
       </button>
+    </div>
+  );
+}
+
+function AddNoteModal({ onSave, onClose }) {
+  const [note, setNote] = useState('');
+
+  function handleSave() {
+    if (!note.trim()) {
+      alert('يرجى إدخال ملاحظة');
+      return;
+    }
+    onSave(note);
+    setNote('');
+    onClose();
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+      <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
+        <h3 className="text-lg font-semibold text-gray-800 mb-4">
+          إضافة ملاحظة جديدة
+        </h3>
+        
+        <div className="mb-4">
+          <label className="block text-sm font-medium text-gray-700 mb-2">
+            الملاحظة *
+          </label>
+          <textarea
+            value={note}
+            onChange={(e) => setNote(e.target.value)}
+            rows={4}
+            className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            placeholder="أدخل ملاحظة..."
+          />
+        </div>
+
+        <div className="flex gap-3">
+          <button
+            onClick={handleSave}
+            className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+          >
+            حفظ
+          </button>
+          <button
+            onClick={() => {
+              setNote('');
+              onClose();
+            }}
+            className="flex-1 bg-gray-200 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-300"
+          >
+            إلغاء
+          </button>
+        </div>
+      </div>
     </div>
   );
 }

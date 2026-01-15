@@ -157,13 +157,18 @@ export default function SalesDashboard() {
     setFilteredClients(filtered);
   }
 
-  async function updateClientStatus(clientId, status, note = '', profitData = null) {
+  async function updateClientStatus(clientId, status, note = '', profitData = null, postponedDate = null) {
     try {
       const clientRef = doc(db, 'clients', clientId);
       const updateData = {
         status,
         updatedAt: new Date().toISOString()
       };
+
+      // Add postponed date if status is postponed
+      if (status === 'postponed' && postponedDate) {
+        updateData.postponedDate = postponedDate;
+      }
 
       // Add note if provided
       if (note.trim()) {
@@ -173,6 +178,9 @@ export default function SalesDashboard() {
           authorName: currentUser.email,
           timestamp: new Date().toISOString()
         };
+        if (status === 'postponed' && postponedDate) {
+          noteEntry.postponedDate = postponedDate;
+        }
         updateData.notes = arrayUnion(noteEntry);
       }
 
@@ -538,8 +546,8 @@ function ClientRow({ client, exchangeRates, onStatusChange }) {
     setProfitData({ costPrice: '', sellPrice: '', costCurrency: 'SAR', sellCurrency: 'SAR' });
   }
 
-  async function handleSaveNote() {
-    await onStatusChange(client.id, status, note);
+  async function handleSaveNote(postponedDate = null) {
+    await onStatusChange(client.id, status, note, null, postponedDate);
     setShowNoteModal(false);
     setNote('');
   }
@@ -652,6 +660,31 @@ function ClientRow({ client, exchangeRates, onStatusChange }) {
 }
 
 function NoteModal({ status, note, setNote, onSave, onClose }) {
+  const [postponedDate, setPostponedDate] = useState('');
+  const [dateError, setDateError] = useState('');
+
+  function handleSave() {
+    if (status === 'postponed') {
+      if (!postponedDate) {
+        setDateError('يرجى إدخال تاريخ التأجيل');
+        return;
+      }
+      const selectedDate = new Date(postponedDate);
+      const today = new Date();
+      today.setHours(0, 0, 0, 0);
+      selectedDate.setHours(0, 0, 0, 0);
+      
+      if (selectedDate <= today) {
+        setDateError('تاريخ التأجيل يجب أن يكون أكبر من التاريخ الحالي');
+        return;
+      }
+      setDateError('');
+      onSave(postponedDate);
+    } else {
+      onSave();
+    }
+  }
+
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
       <div className="bg-white rounded-lg p-6 max-w-md w-full mx-4">
@@ -672,9 +705,32 @@ function NoteModal({ status, note, setNote, onSave, onClose }) {
           />
         </div>
 
+        {status === 'postponed' && (
+          <div className="mb-4">
+            <label className="block text-sm font-medium text-gray-700 mb-2">
+              تاريخ التأجيل *
+            </label>
+            <input
+              type="date"
+              value={postponedDate}
+              onChange={(e) => {
+                setPostponedDate(e.target.value);
+                setDateError('');
+              }}
+              min={new Date().toISOString().split('T')[0]}
+              className={`w-full px-3 py-2 border rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                dateError ? 'border-red-300' : 'border-gray-300'
+              }`}
+            />
+            {dateError && (
+              <p className="mt-1 text-sm text-red-600">{dateError}</p>
+            )}
+          </div>
+        )}
+
         <div className="flex gap-3">
           <button
-            onClick={onSave}
+            onClick={handleSave}
             className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
           >
             حفظ
