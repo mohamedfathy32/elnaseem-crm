@@ -448,12 +448,41 @@ export default function ManagerDashboard() {
 
         {/* Statistics Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-6 gap-4 mb-8">
-          <StatCard title="إجمالي العملاء" value={statistics.totalClients} color="blue" />
-          <StatCard title="تم البيع" value={statistics.sold} color="green" />
-          <StatCard title="مؤجل" value={statistics.postponed} color="yellow" />
-          <StatCard title="رفض" value={statistics.rejected} color="red" />
-          <StatCard title="في انتظار العرض" value={statistics.waitingOffer} color="purple" />
-          <StatCard title="إجمالي الأرباح" value={`${statistics.totalProfit.toFixed(2)} ج.م`} color="indigo" />
+          <StatCard 
+            title="إجمالي العملاء" 
+            value={statistics.totalClients} 
+            color="blue"
+            onClick={() => navigate('/manager/clients/all')}
+          />
+          <StatCard 
+            title="تم البيع" 
+            value={statistics.sold} 
+            color="green"
+            onClick={() => navigate('/manager/clients/sold')}
+          />
+          <StatCard 
+            title="مؤجل" 
+            value={statistics.postponed} 
+            color="yellow"
+            onClick={() => navigate('/manager/clients/postponed')}
+          />
+          <StatCard 
+            title="رفض" 
+            value={statistics.rejected} 
+            color="red"
+            onClick={() => navigate('/manager/clients/rejected')}
+          />
+          <StatCard 
+            title="في انتظار العرض" 
+            value={statistics.waitingOffer} 
+            color="purple"
+            onClick={() => navigate('/manager/clients/waitingOffer')}
+          />
+          <StatCard 
+            title="إجمالي الأرباح" 
+            value={`${statistics.totalProfit.toFixed(2)} ج.م`} 
+            color="indigo" 
+          />
         </div>
 
         {/* Employees Table */}
@@ -890,7 +919,7 @@ export default function ManagerDashboard() {
   );
 }
 
-function StatCard({ title, value, color }) {
+function StatCard({ title, value, color, status, onClick }) {
   const colorClasses = {
     blue: 'bg-blue-50 border-blue-200 text-blue-700',
     green: 'bg-green-50 border-green-200 text-green-700',
@@ -900,8 +929,14 @@ function StatCard({ title, value, color }) {
     indigo: 'bg-indigo-50 border-indigo-200 text-indigo-700'
   };
 
+  const baseClasses = `rounded-lg border p-4 ${colorClasses[color]}`;
+  const clickableClasses = onClick ? 'cursor-pointer hover:shadow-md transition-shadow' : '';
+
   return (
-    <div className={`rounded-lg border p-4 ${colorClasses[color]}`}>
+    <div 
+      className={`${baseClasses} ${clickableClasses}`}
+      onClick={onClick}
+    >
       <div className="text-sm font-medium mb-1">{title}</div>
       <div className="text-2xl font-bold">{value}</div>
     </div>
