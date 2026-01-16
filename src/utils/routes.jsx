@@ -11,6 +11,7 @@ import DataEntryDashboard from '../pages/dataentry/DataEntryDashboard';
 import AddClient from '../pages/dataentry/AddClient';
 import SalesDashboard from '../pages/sales/SalesDashboard';
 import ClientDetails from '../pages/ClientDetails';
+import EmployeeProfile from '../pages/EmployeeProfile';
 
 export const router = createBrowserRouter([
   {
@@ -62,6 +63,14 @@ export const router = createBrowserRouter([
     )
   },
   {
+    path: '/manager/add-client',
+    element: (
+      <ProtectedRoute allowedRoles={['manager']}>
+        <AddClient />
+      </ProtectedRoute>
+    )
+  },
+  {
     path: '/dataentry/dashboard',
     element: (
       <ProtectedRoute allowedRoles={['dataentry']}>
@@ -90,6 +99,14 @@ export const router = createBrowserRouter([
     element: (
       <ProtectedRoute allowedRoles={['manager', 'dataentry', 'sales']}>
         <ClientDetails />
+      </ProtectedRoute>
+    )
+  },
+  {
+    path: '/employee/profile',
+    element: (
+      <ProtectedRoute allowedRoles={['sales', 'dataentry']}>
+        <EmployeeProfile />
       </ProtectedRoute>
     )
   },

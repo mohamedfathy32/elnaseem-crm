@@ -401,6 +401,12 @@ export default function ManagerDashboard() {
             <h1 className="text-2xl font-bold text-gray-800">لوحة تحكم المدير</h1>
             <div className="flex gap-4 items-center">
               <Link
+                to="/manager/add-client"
+                className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700"
+              >
+                إضافة عميل
+              </Link>
+              <Link
                 to="/manager/add-employee"
                 className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
               >

@@ -246,12 +246,20 @@ export default function SalesDashboard() {
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-4">
           <div className="flex justify-between items-center">
             <h1 className="text-2xl font-bold text-gray-800">لوحة تحكم Sales</h1>
-            <button
-              onClick={handleLogout}
-              className="text-red-600 hover:text-red-700 px-4 py-2"
-            >
-              تسجيل الخروج
-            </button>
+            <div className="flex gap-4 items-center">
+              <Link
+                to="/employee/profile"
+                className="text-blue-600 hover:text-blue-700 px-4 py-2"
+              >
+                ملفي الشخصي
+              </Link>
+              <button
+                onClick={handleLogout}
+                className="text-red-600 hover:text-red-700 px-4 py-2"
+              >
+                تسجيل الخروج
+              </button>
+            </div>
           </div>
         </div>
       </header>

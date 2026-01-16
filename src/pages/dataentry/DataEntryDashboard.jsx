@@ -71,6 +71,12 @@ export default function DataEntryDashboard() {
               >
                 إضافة عميل جديد
               </Link>
+              <Link
+                to="/employee/profile"
+                className="text-blue-600 hover:text-blue-700 px-4 py-2"
+              >
+                ملفي الشخصي
+              </Link>
               <button
                 onClick={handleLogout}
                 className="text-red-600 hover:text-red-700 px-4 py-2"

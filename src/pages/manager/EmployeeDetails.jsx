@@ -2,14 +2,13 @@ import { useState, useEffect } from 'react';
 import { useParams, Link } from 'react-router-dom';
 import { doc, getDoc, updateDoc, collection, query, where, getDocs } from 'firebase/firestore';
 import { db } from '../../firebase/firebase';
-// import { useAuth } from '../../contexts/AuthContext';
+import { useAuth } from '../../contexts/AuthContext';
 // import { useAuth as useFirebaseAuth } from 'firebase/auth';
 // import { auth } from '../../firebase/firebase';
 
 export default function EmployeeDetails() {
   const { id } = useParams();
-  // const navigate = useNavigate();
-  // const { userRole } = useAuth();
+  const { userRole } = useAuth();
   const [employee, setEmployee] = useState(null);
   const [employeeClients, setEmployeeClients] = useState([]);
   const [statistics, setStatistics] = useState({
@@ -28,6 +27,9 @@ export default function EmployeeDetails() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState('');
   const [updating, setUpdating] = useState(false);
+  const [salary, setSalary] = useState('');
+  const [editingSalary, setEditingSalary] = useState(false);
+  const [savingSalary, setSavingSalary] = useState(false);
 
   useEffect(() => {
     fetchEmployeeData();
@@ -46,6 +48,7 @@ export default function EmployeeDetails() {
 
       const empData = { id: empDoc.id, ...empDoc.data() };
       setEmployee(empData);
+      setSalary(empData.salary || '');
 
       // Get employee clients
       const clientsQuery = query(
@@ -125,6 +128,43 @@ export default function EmployeeDetails() {
     } finally {
       setUpdating(false);
     }
+  }
+
+  async function saveSalary() {
+    if (!employee) return;
+    
+    setSavingSalary(true);
+    try {
+      const salaryValue = parseFloat(salary);
+      if (isNaN(salaryValue) || salaryValue < 0) {
+        alert('يرجى إدخال راتب صحيح');
+        setSavingSalary(false);
+        return;
+      }
+
+      await updateDoc(doc(db, 'users', id), {
+        salary: salaryValue,
+        updatedAt: new Date().toISOString()
+      });
+
+      setEmployee({ ...employee, salary: salaryValue });
+      setEditingSalary(false);
+      alert('تم حفظ الراتب بنجاح');
+    } catch (error) {
+      console.error('Error saving salary:', error);
+      alert('فشل حفظ الراتب');
+    } finally {
+      setSavingSalary(false);
+    }
+  }
+
+  function calculateCommission(profit) {
+    if (profit < 5000) return 0;
+    if (profit < 10000) return profit * 0.05;
+    if (profit < 15000) return profit * 0.10;
+    if (profit < 20000) return profit * 0.15;
+    if (profit < 25000) return profit * 0.20;
+    return profit * 0.25; // فوق 25000
   }
 
   function getBackPath() {
@@ -231,19 +271,63 @@ export default function EmployeeDetails() {
               </p>
             </div>
             
-            {/* <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">آخر تسجيل دخول</label>
-              <p className="text-gray-900">
-                {statistics.lastLogin ? new Date(statistics.lastLogin).toLocaleDateString('ar-EG') : 'لم يسجل دخول بعد'}
-              </p>
-            </div> */}
-            
-            {/* <div>
-              <label className="block text-sm font-medium text-gray-700 mb-1">عدد مرات الدخول (هذا الشهر)</label>
-              <p className="text-gray-900 font-semibold">{statistics.loginCount}</p>
-            </div> */}
+            {userRole === 'manager' && (
+              <div>
+                <label className="block text-sm font-medium text-gray-700 mb-1">الراتب الثابت (ج.م)</label>
+                {editingSalary ? (
+                  <div className="flex gap-2">
+                    <input
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={salary}
+                      onChange={(e) => setSalary(e.target.value)}
+                      className="flex-1 px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                      placeholder="0.00"
+                    />
+                    <button
+                      onClick={saveSalary}
+                      disabled={savingSalary}
+                      className="bg-green-600 text-white px-4 py-2 rounded-lg hover:bg-green-700 disabled:opacity-50"
+                    >
+                      {savingSalary ? 'جاري الحفظ...' : 'حفظ'}
+                    </button>
+                    <button
+                      onClick={() => {
+                        setSalary(employee.salary || '');
+                        setEditingSalary(false);
+                      }}
+                      className="bg-gray-200 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-300"
+                    >
+                      إلغاء
+                    </button>
+                  </div>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <p className="text-gray-900 font-semibold">
+                      {employee.salary ? `${parseFloat(employee.salary).toFixed(2)} ج.م` : 'غير محدد'}
+                    </p>
+                    <button
+                      onClick={() => setEditingSalary(true)}
+                      className="text-blue-600 hover:text-blue-700 text-sm"
+                    >
+                      تعديل
+                    </button>
+                  </div>
+                )}
+              </div>
+            )}
           </div>
         </div>
+
+        {/* Salary and Commission Section */}
+        {statistics.monthlyProfit > 0 && (
+          <SalaryCommissionCard
+            monthlyProfit={statistics.monthlyProfit}
+            salary={employee.salary || 0}
+            calculateCommission={calculateCommission}
+          />
+        )}
 
         {/* Statistics Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 lg:grid-cols-4 gap-4 mb-8">
@@ -361,6 +445,98 @@ export default function EmployeeDetails() {
           )}
         </div>
       </main>
+    </div>
+  );
+}
+
+function SalaryCommissionCard({ monthlyProfit, salary, calculateCommission }) {
+  const commission = calculateCommission(monthlyProfit);
+  const totalSalary = (salary || 0) + commission;
+  const maxValue = 30000; // Maximum value for the progress bar
+  const milestones = [5000, 10000, 15000, 20000, 25000];
+  const currentPosition = Math.min((monthlyProfit / maxValue) * 100, 100);
+
+  return (
+    <div className="bg-white rounded-lg shadow overflow-hidden mb-8">
+      <div className="px-6 py-4 border-b border-gray-200">
+        <h2 className="text-xl font-semibold text-gray-800">الراتب والكوميشن (هذا الشهر)</h2>
+      </div>
+      <div className="px-6 py-6">
+        {/* Progress Bar */}
+        <div className="mb-6">
+          <div className="flex justify-between items-center mb-2">
+            <span className="text-sm font-medium text-gray-700">الأرباح الشهرية</span>
+            <span className="text-lg font-bold text-gray-900">{monthlyProfit.toFixed(2)} ج.م</span>
+          </div>
+          
+          <div className="relative h-12 bg-gray-200 rounded-lg overflow-hidden">
+            {/* Progress fill */}
+            <div
+              className="absolute top-0 left-0 h-full bg-gradient-to-r from-blue-500 to-green-500 transition-all duration-500"
+              style={{ width: `${currentPosition}%` }}
+            />
+            
+            {/* Milestone markers */}
+            {milestones.map((milestone, index) => {
+              const position = (milestone / maxValue) * 100;
+              return (
+                <div
+                  key={milestone}
+                  className="absolute top-0 h-full w-0.5 bg-gray-600 z-10"
+                  style={{ left: `${position}%` }}
+                >
+                  <div className="absolute -top-6 left-1/2 transform -translate-x-1/2 text-xs text-gray-600 font-medium whitespace-nowrap">
+                    {milestone.toLocaleString()}
+                  </div>
+                </div>
+              );
+            })}
+            
+            {/* Current position indicator */}
+            {monthlyProfit > 0 && (
+              <div
+                className="absolute top-0 h-full w-1 bg-red-600 z-20 shadow-lg"
+                style={{ left: `${currentPosition}%` }}
+              >
+                <div className="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-red-600 text-white text-xs px-2 py-1 rounded whitespace-nowrap font-bold">
+                  {monthlyProfit.toFixed(2)} ج.م
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+
+        {/* Salary and Commission Details */}
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <div className="bg-blue-50 border border-blue-200 rounded-lg p-4">
+            <div className="text-sm font-medium text-blue-700 mb-1">الراتب الثابت</div>
+            <div className="text-2xl font-bold text-blue-900">
+              {salary ? `${parseFloat(salary).toFixed(2)} ج.م` : 'غير محدد'}
+            </div>
+          </div>
+          
+          <div className="bg-green-50 border border-green-200 rounded-lg p-4">
+            <div className="text-sm font-medium text-green-700 mb-1">الكوميشن</div>
+            <div className="text-2xl font-bold text-green-900">
+              {commission.toFixed(2)} ج.م
+            </div>
+            <div className="text-xs text-green-600 mt-1">
+              {monthlyProfit < 5000 ? '0%' :
+               monthlyProfit < 10000 ? '5%' :
+               monthlyProfit < 15000 ? '10%' :
+               monthlyProfit < 20000 ? '15%' :
+               monthlyProfit < 25000 ? '20%' : '25%'}
+            </div>
+          </div>
+          
+          <div className="bg-indigo-50 border border-indigo-200 rounded-lg p-4">
+            <div className="text-sm font-medium text-indigo-700 mb-1">إجمالي الراتب</div>
+            <div className="text-2xl font-bold text-indigo-900">
+              {totalSalary.toFixed(2)} ج.م
+            </div>
+          </div>
+        </div>
+      </div>
     </div>
   );
 }

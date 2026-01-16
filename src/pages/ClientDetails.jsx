@@ -19,6 +19,7 @@ export default function ClientDetails() {
   const [previousBookings, setPreviousBookings] = useState([]);
   const [showAddNoteModal, setShowAddNoteModal] = useState(false);
   const [userNames, setUserNames] = useState({});
+  const [showEditModal, setShowEditModal] = useState(false);
 
   useEffect(() => {
     // eslint-disable-next-line react-hooks/immutability
@@ -293,8 +294,16 @@ export default function ClientDetails() {
           <div className="lg:col-span-2 space-y-6">
             {/* Client Info */}
             <div className="bg-white rounded-lg shadow overflow-hidden">
-              <div className="px-6 py-4 border-b border-gray-200">
+              <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
                 <h2 className="text-xl font-semibold text-gray-800">معلومات العميل</h2>
+                {userRole === 'manager' && (
+                  <button
+                    onClick={() => setShowEditModal(true)}
+                    className="bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700 text-sm"
+                  >
+                    تعديل البيانات
+                  </button>
+                )}
               </div>
               
               <div className="px-6 py-4 grid grid-cols-1 md:grid-cols-2 gap-6">
@@ -748,6 +757,28 @@ export default function ClientDetails() {
         <AddNoteModal
           onSave={addNote}
           onClose={() => setShowAddNoteModal(false)}
+        />
+      )}
+
+      {/* Edit Client Modal */}
+      {showEditModal && userRole === 'manager' && (
+        <EditClientModal
+          client={client}
+          onSave={async (updatedData) => {
+            try {
+              await updateDoc(doc(db, 'clients', client.id), {
+                ...updatedData,
+                updatedAt: new Date().toISOString()
+              });
+              await fetchClientDetails();
+              setShowEditModal(false);
+              alert('تم تحديث بيانات العميل بنجاح');
+            } catch (error) {
+              console.error('Error updating client:', error);
+              alert('فشل تحديث بيانات العميل');
+            }
+          }}
+          onClose={() => setShowEditModal(false)}
         />
       )}
     </div>
@@ -1354,6 +1385,253 @@ function AddNoteModal({ onSave, onClose }) {
             إلغاء
           </button>
         </div>
+      </div>
+    </div>
+  );
+}
+
+function EditClientModal({ client, onSave, onClose }) {
+  const [formData, setFormData] = useState({
+    clientName: client.clientName || '',
+    whatsappNumber: client.whatsappNumber || '',
+    source: client.source || '',
+    travelDate: client.travelDate ? client.travelDate.split('T')[0] : '',
+    departureAirport: client.departureAirport || '',
+    arrivalAirport: client.arrivalAirport || '',
+    followUpDate: client.followUpDate ? client.followUpDate.split('T')[0] : '',
+    notes: typeof client.notes === 'string' ? client.notes : ''
+  });
+  const [passportUrl, setPassportUrl] = useState(client.passportUrl || '');
+  const [uploadProgress, setUploadProgress] = useState('');
+  const cloudinaryWidgetRef = useRef(null);
+
+  function handleInputChange(e) {
+    const { name, value } = e.target;
+    setFormData(prev => ({
+      ...prev,
+      [name]: value
+    }));
+  }
+
+  function handleUploadClick() {
+    if (!window.cloudinary) {
+      const script = document.createElement('script');
+      script.src = 'https://upload-widget.cloudinary.com/global/all.js';
+      script.async = true;
+      document.body.appendChild(script);
+      
+      script.onload = () => {
+        openCloudinaryWidget();
+      };
+    } else {
+      openCloudinaryWidget();
+    }
+  }
+
+  function openCloudinaryWidget() {
+    cloudinaryWidgetRef.current = window.cloudinary.createUploadWidget(
+      {
+        cloudName: CLOUDINARY_CONFIG.cloudName,
+        uploadPreset: CLOUDINARY_CONFIG.uploadPreset,
+        sources: ['local', 'camera'],
+        multiple: false,
+        maxFileSize: 10000000,
+        clientAllowedFormats: ['image', 'pdf']
+      },
+      (error, result) => {
+        if (!error && result && result.event === 'success') {
+          setPassportUrl(result.info.secure_url);
+          setUploadProgress('تم رفع الصورة بنجاح');
+        } else if (error) {
+          setUploadProgress('فشل رفع الصورة. يرجى المحاولة مرة أخرى.');
+        }
+      }
+    );
+
+    cloudinaryWidgetRef.current.open();
+  }
+
+  function handleSubmit(e) {
+    e.preventDefault();
+    const updatedData = {
+      ...formData,
+      passportUrl: passportUrl || client.passportUrl || '',
+      travelDate: formData.travelDate || null,
+      followUpDate: formData.followUpDate || null
+    };
+    onSave(updatedData);
+  }
+
+  return (
+    <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 overflow-y-auto">
+      <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 my-8 max-h-[90vh] overflow-y-auto">
+        <h3 className="text-lg font-semibold text-gray-800 mb-4">تعديل بيانات العميل</h3>
+        
+        <form onSubmit={handleSubmit} className="space-y-4">
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                اسم العميل *
+              </label>
+              <input
+                type="text"
+                name="clientName"
+                value={formData.clientName}
+                onChange={handleInputChange}
+                required
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                رقم الواتساب *
+              </label>
+              <input
+                type="tel"
+                name="whatsappNumber"
+                value={formData.whatsappNumber}
+                onChange={handleInputChange}
+                required
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="+20XXXXXXXXXX"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                المصدر
+              </label>
+              <input
+                type="text"
+                name="source"
+                value={formData.source}
+                onChange={handleInputChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                تاريخ السفر
+              </label>
+              <input
+                type="date"
+                name="travelDate"
+                value={formData.travelDate}
+                onChange={handleInputChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                مطار الانطلاق
+              </label>
+              <input
+                type="text"
+                name="departureAirport"
+                value={formData.departureAirport}
+                onChange={handleInputChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="مثال: مطار القاهرة"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                مطار الوصول
+              </label>
+              <input
+                type="text"
+                name="arrivalAirport"
+                value={formData.arrivalAirport}
+                onChange={handleInputChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+                placeholder="مثال: مطار جدة"
+              />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                تاريخ المتابعة
+              </label>
+              <input
+                type="date"
+                name="followUpDate"
+                value={formData.followUpDate}
+                onChange={handleInputChange}
+                className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              ملاحظات
+            </label>
+            <textarea
+              name="notes"
+              value={formData.notes}
+              onChange={handleInputChange}
+              rows={3}
+              className="w-full px-3 py-2 border border-gray-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-blue-500"
+            />
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700 mb-1">
+              صورة الباسبور
+            </label>
+            {passportUrl ? (
+              <div className="space-y-2">
+                <div className="flex justify-center">
+                  <img 
+                    src={passportUrl} 
+                    alt="الباسبور" 
+                    className="max-w-full max-h-48 object-contain border border-gray-300 rounded-lg"
+                  />
+                </div>
+                <button
+                  type="button"
+                  onClick={handleUploadClick}
+                  className="w-full bg-gray-200 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-300 text-sm"
+                >
+                  تغيير الصورة
+                </button>
+              </div>
+            ) : (
+              <button
+                type="button"
+                onClick={handleUploadClick}
+                className="w-full bg-blue-100 text-blue-700 px-4 py-2 rounded-lg hover:bg-blue-200 border-2 border-dashed border-blue-300"
+              >
+                رفع صورة الباسبور
+              </button>
+            )}
+            {uploadProgress && (
+              <p className={`text-xs mt-1 ${uploadProgress.includes('نجاح') ? 'text-green-600' : 'text-red-600'}`}>
+                {uploadProgress}
+              </p>
+            )}
+          </div>
+
+          <div className="flex gap-3 pt-4">
+            <button
+              type="submit"
+              className="flex-1 bg-blue-600 text-white px-4 py-2 rounded-lg hover:bg-blue-700"
+            >
+              حفظ التعديلات
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="flex-1 bg-gray-200 text-gray-800 px-4 py-2 rounded-lg hover:bg-gray-300"
+            >
+              إلغاء
+            </button>
+          </div>
+        </form>
       </div>
     </div>
   );
