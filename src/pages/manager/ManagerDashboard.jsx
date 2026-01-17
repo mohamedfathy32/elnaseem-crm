@@ -595,12 +595,12 @@ export default function ManagerDashboard() {
 
         {/* Unassigned Clients Section */}
         <div className="bg-white rounded-lg shadow overflow-hidden mt-8">
-          <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center">
-            <h2 className="text-xl font-semibold text-gray-800">
+          <div className="px-6 py-4 border-b border-gray-200 flex justify-between items-center flex-wrap">
+            <h2 className="text-xl font-semibold text-gray-800 mb-2 md:mb-0">
               العملاء غير المسندين ({filteredUnassignedClients.length})
             </h2>
             {filteredUnassignedClients.length > 0 && (
-              <div className="flex gap-4 items-center">
+              <div className="flex gap-4 items-center flex-wrap">
                 <select
                   value={selectedEmployee}
                   onChange={(e) => setSelectedEmployee(e.target.value)}
@@ -665,6 +665,12 @@ export default function ManagerDashboard() {
                     <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase">
                       تاريخ السفر
                     </th>
+                    <th className="text-start px-6 py-3 text-xs font-medium text-gray-500 uppercase">
+                      مطار الانطلاق 
+                    </th>
+                    <th className="text-start px-6 py-3 text-xs font-medium text-gray-500 uppercase">
+                       مطار الموصول
+                    </th>
                     <th className="px-6 py-3 text-xs font-medium text-gray-500 uppercase">
                       الحالة
                     </th>
@@ -713,6 +719,12 @@ export default function ManagerDashboard() {
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {client.travelDate || '-'}
                       </td>
+                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {client.departureAirport}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {client.arrivalAirport}
+                      </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm">
                         <span className={`px-2 py-1 rounded-full text-xs ${
                           client.status === 'sold' ? 'bg-green-100 text-green-800' :
@@ -753,7 +765,7 @@ export default function ManagerDashboard() {
             </div>
           )}
         </div>
-
+{console.log(filteredAssignedClients)}
         {/* Assigned Clients Section */}
         <div className="bg-white rounded-lg shadow overflow-hidden mt-8">
           <div className="px-6 py-4 border-b border-gray-200">
@@ -850,6 +862,12 @@ export default function ManagerDashboard() {
                       تاريخ السفر
                     </th>
                     <th className="text-start px-6 py-3 text-xs font-medium text-gray-500 uppercase">
+                      مطار الانطلاق 
+                    </th>
+                    <th className="text-start px-6 py-3 text-xs font-medium text-gray-500 uppercase">
+                       مطار الموصول
+                    </th>
+                    <th className="text-start px-6 py-3 text-xs font-medium text-gray-500 uppercase">
                       المسند إلى
                     </th>
                     <th className="text-start px-6 py-3 text-xs font-medium text-gray-500 uppercase">
@@ -891,6 +909,12 @@ export default function ManagerDashboard() {
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {client.travelDate || '-'}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {client.departureAirport}
+                      </td>
+                      <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                        {client.arrivalAirport}
                       </td>
                       <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                         {client.employeeName || '-'}
